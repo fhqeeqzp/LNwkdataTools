@@ -1,3 +1,7 @@
+
+<img width="928" height="725" alt="网刊价格界面" src="https://github.com/user-attachments/assets/2db1629d-6326-46ce-a936-dfe5607d589b" />
+
+
 # 辽宁省网刊价格数据提取工具使用说明
 
 ## 1. 程序概述
