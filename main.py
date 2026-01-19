@@ -35,6 +35,11 @@ class MaterialPriceScraper:
         self.all_data = []
         self.headers = []
         
+        # 参数变更跟踪变量
+        self.current_city = ""
+        self.current_year = ""
+        self.current_month = ""
+        
         # 窗口拖动相关变量
         self.start_x = 0
         self.start_y = 0
@@ -344,8 +349,46 @@ class MaterialPriceScraper:
             self.export_btn.config(state="disabled")
             self.connection_status.config(text="未连接", foreground="red")
     
+    def on_parameter_change(self):
+        """参数变更回调函数"""
+        # 获取当前选择的参数
+        current_city = self.city_var.get()
+        current_year = self.year_var.get()
+        current_month = self.month_var.get()
+        
+        # 检查是否有变化
+        if (current_city != self.current_city or 
+            current_year != self.current_year or 
+            current_month != self.current_month):
+            
+            # 更新当前参数
+            self.current_city = current_city
+            self.current_year = current_year
+            self.current_month = current_month
+            
+            # 启用查询按钮
+            if self.is_connected:
+                self.query_btn.config(state="normal")
+            
+            # 重置相关状态
+            self.total_pages = 0
+            self.total_records = 0
+            self.all_data = []
+            self.headers = []
+            
+            # 更新UI显示
+            self.total_pages_label.config(text="总页数: 0")
+            self.total_records_label.config(text="总记录数: 0")
+            
+            # 禁用提取和导出按钮
+            self.extract_btn.config(state="disabled")
+            self.export_btn.config(state="disabled")
+    
     def connect_to_website(self):
         """连接到网站，建立会话"""
+        # 立即禁用连接按钮，防止重复点击
+        self.connect_btn.config(state="disabled")
+        
         def connect_task():
             max_retries = 3
             retry_count = 0
@@ -430,6 +473,10 @@ class MaterialPriceScraper:
             # 所有重试都失败
             self.log_message(f"❌ 网站连接失败，已重试{max_retries}次")
             self.is_connected = False
+            # 连接失败后，重新启用连接按钮
+            self.root.after(0, lambda: self.connect_btn.config(state="normal"))
+            # 更新按钮状态
+            self.root.after(0, self.update_button_states)
         
         # 使用线程执行连接操作，避免阻塞GUI
         thread = threading.Thread(target=connect_task)
@@ -506,11 +553,10 @@ class MaterialPriceScraper:
             self.log_message(f"✅ 成功获取 {len(city_values)} 个城市")
             
             # 更新城市选择器
-            self.root.after(0, lambda: self.city_combo.config(values=city_values))
+            self.root.after(0, lambda: self.city_combo.config(values=city_values, postcommand=self.on_parameter_change))
             
             if city_values:
                 self.root.after(0, lambda: self.city_combo.current(0))
-            
         except Exception as e:
             # 使用默认城市列表
             city_mapping = {
@@ -522,7 +568,7 @@ class MaterialPriceScraper:
             self.city_mapping = city_mapping
             city_values = list(city_mapping.values())
             self.log_message(f"✅ 成功获取 {len(city_values)} 个城市")
-            self.root.after(0, lambda: self.city_combo.config(values=city_values))
+            self.root.after(0, lambda: self.city_combo.config(values=city_values, postcommand=self.on_parameter_change))
             if city_values:
                 self.root.after(0, lambda: self.city_combo.current(0))
     
@@ -539,8 +585,8 @@ class MaterialPriceScraper:
             self.month_list = [f"{month:02d}" for month in range(1, 13)]
             
             # 更新年份和月份选择器
-            self.root.after(0, lambda: self.year_combo.config(values=self.year_list))
-            self.root.after(0, lambda: self.month_combo.config(values=self.month_list))
+            self.root.after(0, lambda: self.year_combo.config(values=self.year_list, postcommand=self.on_parameter_change))
+            self.root.after(0, lambda: self.month_combo.config(values=self.month_list, postcommand=self.on_parameter_change))
             
             if self.year_list:
                 self.root.after(0, lambda: self.year_combo.current(0))
@@ -662,6 +708,9 @@ class MaterialPriceScraper:
                     self.root.after(0, lambda: self.total_pages_label.config(text=f"总页数: {total_pages}"))
                     
                     self.log_message(f"✅ 查询成功，共 {total_records} 条记录，{total_pages} 页")
+                    
+                    # 锁定查询按钮，只有参数变更后才能重新点击
+                    self.root.after(0, lambda: self.query_btn.config(state="disabled"))
                     
                     # 启用数据提取按钮
                     self.root.after(0, lambda: self.extract_btn.config(state="normal"))
@@ -913,7 +962,7 @@ class MaterialPriceScraper:
         return [], []
     
     def export_data(self):
-        """保存数据到Excel/CSV（增强版：彻底解决乱码问题）"""
+        """保存数据到Excel/CSV（增强版：彻底解决乱码问题并添加表格样式）"""
         if not self.all_data or not self.headers:
             messagebox.showwarning("警告", "没有数据可以保存！")
             return
@@ -959,11 +1008,78 @@ class MaterialPriceScraper:
             if not file_path:
                 return
             
-            # 4. 保存为Excel文件（增强版）
+            # 4. 保存为Excel文件（增强版：添加表格样式）
             if file_path.endswith('.xlsx'):
                 try:
                     with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                        # 写入数据
                         df.to_excel(writer, index=False, sheet_name='材料价格')
+                        
+                        # 获取工作表
+                        worksheet = writer.sheets['材料价格']
+                        
+                        # 导入openpyxl样式模块
+                        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+                        
+                        # 定义样式
+                        # 表头样式
+                        header_font = Font(bold=True, color="FFFFFF", size=10)
+                        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                        header_alignment = Alignment(horizontal="center", vertical="center")
+                        
+                        # 数据样式
+                        data_font = Font(size=10)
+                        data_alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
+                        
+                        # 边框样式
+                        thin_border = Border(
+                            left=Side(style='thin'),
+                            right=Side(style='thin'),
+                            top=Side(style='thin'),
+                            bottom=Side(style='thin')
+                        )
+                        
+                        # 设置表头样式
+                        for col_num, header in enumerate(clean_headers, 1):
+                            cell = worksheet.cell(row=1, column=col_num)
+                            cell.font = header_font
+                            cell.fill = header_fill
+                            cell.alignment = header_alignment
+                            cell.border = thin_border
+                        
+                        # 设置数据区域样式
+                        for row_num in range(2, len(df) + 2):
+                            for col_num in range(1, len(clean_headers) + 1):
+                                cell = worksheet.cell(row=row_num, column=col_num)
+                                cell.font = data_font
+                                cell.alignment = data_alignment
+                                cell.border = thin_border
+                        
+                        # 自动调整列宽
+                        for column in worksheet.columns:
+                            max_length = 0
+                            column_letter = column[0].column_letter
+                            for cell in column:
+                                try:
+                                    if len(str(cell.value)) > max_length:
+                                        max_length = len(str(cell.value))
+                                except:
+                                    pass
+                            adjusted_width = min(max_length + 2, 100)  # 限制最大宽度为100
+                            worksheet.column_dimensions[column_letter].width = adjusted_width
+                        
+                        # 设置行高
+                        worksheet.row_dimensions[1].height = 21  # 表头行高
+                        for row_num in range(2, len(df) + 2):
+                            worksheet.row_dimensions[row_num].height = 21  # 数据行高
+                        
+                        # 添加隔行显示底色
+                        from openpyxl.styles import PatternFill
+                        even_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")  # 浅灰色
+                        for row_num in range(2, len(df) + 2, 2):  # 从第2行开始，间隔2行
+                            for col_num in range(1, len(clean_headers) + 1):
+                                cell = worksheet.cell(row=row_num, column=col_num)
+                                cell.fill = even_fill                        
                     self.log_message(f"✅ Excel数据已保存到: {file_path}")
                 except Exception as e:
                     # 降级方案：使用xlwt引擎（如果可用）
@@ -986,7 +1102,75 @@ class MaterialPriceScraper:
                 # 默认保存为Excel
                 excel_path = file_path + '.xlsx'
                 with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+                    # 写入数据
                     df.to_excel(writer, index=False, sheet_name='材料价格')
+                    
+                    # 获取工作表
+                    worksheet = writer.sheets['材料价格']
+                    
+                    # 导入openpyxl样式模块
+                    from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+                    
+                    # 定义样式
+                    # 表头样式
+                    header_font = Font(bold=True, color="FFFFFF", size=10)
+                    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                    header_alignment = Alignment(horizontal="center", vertical="center")
+                    
+                    # 数据样式
+                    data_font = Font(size=10)
+                    data_alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
+                    
+                    # 边框样式
+                    thin_border = Border(
+                        left=Side(style='thin'),
+                        right=Side(style='thin'),
+                        top=Side(style='thin'),
+                        bottom=Side(style='thin')
+                    )
+                    
+                    # 设置表头样式
+                    for col_num, header in enumerate(clean_headers, 1):
+                        cell = worksheet.cell(row=1, column=col_num)
+                        cell.font = header_font
+                        cell.fill = header_fill
+                        cell.alignment = header_alignment
+                        cell.border = thin_border
+                    
+                    # 设置数据区域样式
+                    for row_num in range(2, len(df) + 2):
+                        for col_num in range(1, len(clean_headers) + 1):
+                            cell = worksheet.cell(row=row_num, column=col_num)
+                            cell.font = data_font
+                            cell.alignment = data_alignment
+                            cell.border = thin_border
+                    
+                    # 自动调整列宽
+                    for column in worksheet.columns:
+                        max_length = 0
+                        column_letter = column[0].column_letter
+                        for cell in column:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = min(max_length + 2, 100)  # 限制最大宽度为100
+                        worksheet.column_dimensions[column_letter].width = adjusted_width
+                    
+                    # 设置行高
+                    worksheet.row_dimensions[1].height = 21  # 表头行高
+                    for row_num in range(2, len(df) + 2):
+                        worksheet.row_dimensions[row_num].height = 21  # 数据行高
+                    
+                    # 添加隔行显示底色
+                    from openpyxl.styles import PatternFill
+                    even_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")  # 浅灰色
+                    for row_num in range(2, len(df) + 2, 2):  # 从第2行开始，间隔2行
+                        for col_num in range(1, len(clean_headers) + 1):
+                            cell = worksheet.cell(row=row_num, column=col_num)
+                            cell.fill = even_fill
+                
                 self.log_message(f"✅ Excel数据已保存到: {excel_path}")
                 file_path = excel_path
             
